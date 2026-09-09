@@ -6,16 +6,15 @@ from typing import Iterable
 
 from utils.errors import FileAccessError, ValidationError
 
-VALID_SPREADSHEET_EXTENSIONS = {".xlsx", ".xls"}
+VALID_SPREADSHEET_EXTENSIONS = {".xlsx"}
 
 
-def require_files_selected(files: Iterable[str], message: str = "Selecione ao menos um arquivo.") -> None:
-    if not files:
-        raise ValidationError(message)
-
-
-def require_folder_selected(folder: str | None, message: str = "Selecione uma pasta.") -> None:
-    if not folder:
+def require_files_selected(
+    files: Iterable[str],
+    message: str = "Selecione ao menos um arquivo.",
+    minimum: int = 1,
+) -> None:
+    if len(list(files)) < minimum:
         raise ValidationError(message)
 
 
@@ -27,14 +26,6 @@ def validate_spreadsheet_path(path: str | Path) -> Path:
         )
     if p.suffix.lower() not in VALID_SPREADSHEET_EXTENSIONS:
         raise ValidationError(f"'{p.name}' não é uma planilha Excel válida (.xlsx).")
+    if not p.is_file():
+        raise FileAccessError(f"'{p.name}' não é um arquivo válido.")
     return p
-
-
-def is_file_locked(path: str | Path) -> bool:
-    """Verifica se o arquivo está aberto/bloqueado (ex: aberto no Excel)."""
-    p = Path(path)
-    try:
-        with open(p, "a+b"):
-            return False
-    except (PermissionError, OSError):
-        return True

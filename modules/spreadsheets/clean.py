@@ -12,9 +12,14 @@ import customtkinter as ctk
 
 from core.module_base import AutomationModule, ModuleInfo
 from core.task_runner import run_in_background
-from services.excel_service import clean_spreadsheet
+from services.activity_service import record_execution
+from services.excel_service import clean_spreadsheet, spreadsheet_preview
+from ui.components.buttons import PrimaryButton, SecondaryButton
 from ui.components.status_badge import StatusBadge
-from ui.theme import COLORS, CORNER_RADIUS, FONT_FAMILY, PADDING
+from ui.components.workflow_actions import ask_and_save_routine, confirm_execution
+from ui.icons import load_icon
+from ui.theme import COLORS, CORNER_RADIUS, FONT_FAMILY, FONT_SIZES, PADDING
+from utils.errors import AppError
 from utils.paths import open_in_explorer, unique_path
 
 
@@ -24,7 +29,7 @@ class CleanSpreadsheetModule(AutomationModule):
         name="Limpar planilha",
         description="Remova duplicados, linhas vazias e espaços extras.",
         category="Planilhas",
-        icon="🧹",
+        icon="brush-cleaning",
     )
 
     def build_ui(self, parent, app) -> "ctk.CTkFrame":
@@ -42,8 +47,10 @@ class CleanSpreadsheetScreen(ctk.CTkFrame):
 
         header = ctk.CTkLabel(
             self,
-            text="🧹  Limpar planilha",
-            font=(FONT_FAMILY, 22, "bold"),
+            text="Limpar planilha",
+            image=load_icon("brush-cleaning", 24),
+            compound="left",
+            font=(FONT_FAMILY, FONT_SIZES["title"], "bold"),
             text_color=COLORS["text_primary"],
             anchor="w",
         )
@@ -52,9 +59,10 @@ class CleanSpreadsheetScreen(ctk.CTkFrame):
         subtitle = ctk.CTkLabel(
             self,
             text="Escolha a planilha e as opções de limpeza. Um novo arquivo será gerado.",
-            font=(FONT_FAMILY, 13),
+            font=(FONT_FAMILY, FONT_SIZES["subtitle"]),
             text_color=COLORS["text_secondary"],
             anchor="w",
+            wraplength=620,
         )
         subtitle.grid(row=1, column=0, sticky="w", padx=PADDING, pady=(0, 20))
 
@@ -62,7 +70,13 @@ class CleanSpreadsheetScreen(ctk.CTkFrame):
         panel.grid(row=2, column=0, sticky="ew", padx=PADDING)
         panel.grid_columnconfigure(0, weight=1)
 
-        select_btn = ctk.CTkButton(panel, text="Selecionar planilha", command=self._select_file)
+        select_btn = SecondaryButton(
+            panel,
+            text="Selecionar planilha",
+            image=load_icon("file-spreadsheet", 18),
+            compound="left",
+            command=self._select_file,
+        )
         select_btn.grid(row=0, column=0, sticky="w", padx=20, pady=(20, 8))
 
         self.file_label = ctk.CTkLabel(
@@ -97,11 +111,36 @@ class CleanSpreadsheetScreen(ctk.CTkFrame):
                 row=i, column=0, sticky="w", pady=4
             )
 
+        ctk.CTkLabel(
+            panel, text="Prévia dos dados",
+            font=(FONT_FAMILY, 13, "bold"), text_color=COLORS["text_primary"], anchor="w",
+        ).grid(row=3, column=0, sticky="w", padx=20, pady=(4, 6))
+        self.preview_label = ctk.CTkLabel(
+            panel, text="Selecione uma planilha para visualizar uma amostra.",
+            font=("Consolas", 11), text_color=COLORS["text_secondary"],
+            anchor="w", justify="left", wraplength=760,
+        )
+        self.preview_label.grid(row=4, column=0, sticky="w", padx=20, pady=(0, 20))
+
         action_row = ctk.CTkFrame(self, fg_color="transparent")
         action_row.grid(row=3, column=0, sticky="ew", padx=PADDING, pady=20)
 
-        self.run_btn = ctk.CTkButton(action_row, text="Limpar planilha", command=self._run, width=180)
+        self.run_btn = PrimaryButton(
+            action_row, text="Limpar planilha", command=self._run, width=180
+        )
         self.run_btn.pack(side="left")
+
+        SecondaryButton(
+            action_row, text="Salvar rotina", command=self._save_routine, width=130
+        ).pack(side="left", padx=(10, 0))
+
+        self.open_folder_btn = SecondaryButton(
+            action_row,
+            text="Abrir pasta",
+            image=load_icon("folder-open", 18),
+            compound="left",
+            command=self._open_last_output,
+        )
 
         self.status_badge = StatusBadge(self)
         self.status_badge.grid(row=4, column=0, sticky="w", padx=PADDING)
@@ -113,6 +152,7 @@ class CleanSpreadsheetScreen(ctk.CTkFrame):
             text_color=COLORS["text_secondary"],
             anchor="w",
             justify="left",
+            wraplength=620,
         )
         self.summary_label.grid(row=5, column=0, sticky="w", padx=PADDING, pady=(8, 0))
 
@@ -123,7 +163,12 @@ class CleanSpreadsheetScreen(ctk.CTkFrame):
         if file:
             self.selected_file = file
             self.file_label.configure(text=Path(file).name)
-            self.status_badge.set_state("pronto")
+            try:
+                self.preview_label.configure(text=spreadsheet_preview(file))
+                self.status_badge.set_state("pronto")
+            except AppError as exc:
+                self.preview_label.configure(text="Prévia indisponível.")
+                self.status_badge.set_state("erro", exc.user_message)
 
     def _run(self) -> None:
         if self._processing:
@@ -134,27 +179,37 @@ class CleanSpreadsheetScreen(ctk.CTkFrame):
 
         source = Path(self.selected_file)
         output_path = unique_path(source.parent, f"{source.stem}_limpo.xlsx")
+        selected_file = self.selected_file
+        options = self._cleaning_options()
+
+        enabled = sum(1 for value in options.values() if value)
+        details = (
+            f"Arquivo: {selected_file}\n"
+            f"Destino: {output_path}\n"
+            f"Opções de limpeza ativas: {enabled}\n\n"
+            f"Amostra:\n{self.preview_label.cget('text')}"
+        )
+        if not confirm_execution(self, "Limpar planilha", details):
+            return
 
         self._processing = True
+        self.open_folder_btn.pack_forget()
         self.run_btn.configure(state="disabled")
         self.status_badge.set_state("processando")
         self.summary_label.configure(text="")
 
         def task():
             return clean_spreadsheet(
-                self.selected_file,
+                selected_file,
                 output_path,
-                remove_empty_rows=self.opt_empty_rows.get(),
-                remove_duplicates=self.opt_duplicates.get(),
-                trim_whitespace=self.opt_whitespace.get(),
-                remove_empty_columns=self.opt_empty_cols.get(),
-                standardize_headers=self.opt_headers.get(),
-                ignore_case_on_duplicates=self.opt_ignore_case.get(),
+                **options,
             )
 
         def on_success(summary: dict[str, int]) -> None:
             self._processing = False
             self.run_btn.configure(state="normal")
+            self._last_output_dir = output_path.parent
+            self.open_folder_btn.pack(side="left", padx=(16, 0))
             self.status_badge.set_state("concluido", f"Arquivo gerado: '{output_path.name}'.")
             self.summary_label.configure(
                 text=(
@@ -163,6 +218,12 @@ class CleanSpreadsheetScreen(ctk.CTkFrame):
                     f"Duplicados removidos: {summary['duplicados_removidos']}"
                 )
             )
+            record_execution(
+                CleanSpreadsheetModule.info.key, CleanSpreadsheetModule.info.name,
+                "success",
+                f"{summary['linhas_finais']} linhas e {summary['colunas_finais']} colunas gravadas em {output_path.name}.",
+                output_path,
+            )
             if self.app.settings.open_folder_after_finish:
                 open_in_explorer(output_path.parent)
 
@@ -170,5 +231,64 @@ class CleanSpreadsheetScreen(ctk.CTkFrame):
             self._processing = False
             self.run_btn.configure(state="normal")
             self.status_badge.set_state("erro", message)
+            record_execution(
+                CleanSpreadsheetModule.info.key, CleanSpreadsheetModule.info.name,
+                "error", message,
+            )
 
         run_in_background(self, CleanSpreadsheetModule.info.key, task, on_success, on_error)
+
+    def _open_last_output(self) -> None:
+        if hasattr(self, "_last_output_dir"):
+            open_in_explorer(self._last_output_dir)
+
+    def _cleaning_options(self) -> dict[str, bool]:
+        return {
+            "remove_empty_rows": self.opt_empty_rows.get(),
+            "remove_duplicates": self.opt_duplicates.get(),
+            "trim_whitespace": self.opt_whitespace.get(),
+            "remove_empty_columns": self.opt_empty_cols.get(),
+            "standardize_headers": self.opt_headers.get(),
+            "ignore_case_on_duplicates": self.opt_ignore_case.get(),
+        }
+
+    def _save_routine(self) -> None:
+        if not self.selected_file:
+            self.status_badge.set_state("erro", "Selecione uma planilha antes de salvar.")
+            return
+        try:
+            name = ask_and_save_routine(
+                self, CleanSpreadsheetModule.info.key, CleanSpreadsheetModule.info.name,
+                {"selected_file": self.selected_file, "options": self._cleaning_options()},
+            )
+        except OSError:
+            self.status_badge.set_state("erro", "Não foi possível salvar a rotina.")
+            return
+        if name:
+            self.status_badge.set_state("concluido", f"Rotina “{name}” salva.")
+
+    def apply_preset(self, parameters: dict) -> None:
+        file = parameters.get("selected_file")
+        if not file or not Path(file).is_file():
+            self.status_badge.set_state("erro", "O arquivo desta rotina não está mais disponível.")
+            return
+        self.selected_file = str(file)
+        self.file_label.configure(text=Path(file).name)
+        variables = {
+            "remove_empty_rows": self.opt_empty_rows,
+            "remove_duplicates": self.opt_duplicates,
+            "trim_whitespace": self.opt_whitespace,
+            "remove_empty_columns": self.opt_empty_cols,
+            "standardize_headers": self.opt_headers,
+            "ignore_case_on_duplicates": self.opt_ignore_case,
+        }
+        options = parameters.get("options", {})
+        for key, variable in variables.items():
+            if key in options:
+                variable.set(bool(options[key]))
+        try:
+            self.preview_label.configure(text=spreadsheet_preview(file))
+        except AppError as exc:
+            self.status_badge.set_state("erro", exc.user_message)
+            return
+        self.status_badge.set_state("pronto", "Rotina carregada. Revise a prévia.")

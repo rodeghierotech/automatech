@@ -22,6 +22,9 @@ class StatusBadge(ctk.CTkLabel):
             text=f"●  {text}",
             font=(FONT_FAMILY, 12, "bold"),
             text_color=color,
+            fg_color=COLORS["bg_card"],
+            corner_radius=8,
+            height=30,
             **kwargs,
         )
         self._state = "aguardando"

@@ -1,13 +1,13 @@
 """Executa funções demoradas em uma thread separada, sem travar a UI.
 
-Regra de ouro: nada que rode dentro da thread deve tocar em widgets
-diretamente. O retorno (sucesso ou erro) é entregue de volta à thread
-principal via `widget.after(0, callback)`, que é a forma segura do
-Tkinter/CustomTkinter de atualizar a interface.
+Regra de ouro: nada que rode dentro da thread toca em widgets diretamente.
+O worker envia o resultado por uma fila, consultada pela thread principal.
 """
 from __future__ import annotations
 
 import threading
+from queue import Empty, Queue
+from tkinter import TclError
 from typing import Any, Callable
 
 from core.logger import log_error
@@ -29,22 +29,45 @@ def run_in_background(
     - on_error: chamado na thread principal com uma mensagem amigável.
     """
 
+    result_queue: Queue[tuple[str, Any]] = Queue(maxsize=1)
+
     def worker() -> None:
         try:
             result = task()
         except AppError as exc:
             log_error(module_name, exc)
-            widget.after(0, lambda: on_error(exc.user_message))
+            result_queue.put(("error", exc.user_message))
         except Exception as exc:  # noqa: BLE001 - captura genérica proposital
             log_error(module_name, exc)
-            widget.after(
-                0,
-                lambda: on_error(
-                    "Ocorreu um erro inesperado ao processar. Detalhes foram salvos no log."
-                ),
+            result_queue.put(
+                (
+                    "error",
+                    "Ocorreu um erro inesperado ao processar. Detalhes foram salvos no log.",
+                )
             )
         else:
-            widget.after(0, lambda: on_success(result))
+            result_queue.put(("success", result))
+
+    def poll_result() -> None:
+        try:
+            state, payload = result_queue.get_nowait()
+        except Empty:
+            try:
+                widget.after(50, poll_result)
+            except TclError:
+                return
+            return
+
+        try:
+            if not widget.winfo_exists():
+                return
+            if state == "success":
+                on_success(payload)
+            else:
+                on_error(payload)
+        except TclError:
+            return
 
     thread = threading.Thread(target=worker, daemon=True)
     thread.start()
+    widget.after(50, poll_result)

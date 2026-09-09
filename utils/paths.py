@@ -1,8 +1,10 @@
 """Utilitários para manipulação segura de caminhos e nomes de arquivo."""
 from __future__ import annotations
 
+import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 INVALID_WINDOWS_CHARS = r'<>:"/\\|?*'
@@ -13,7 +15,7 @@ RESERVED_NAMES = {
 }
 
 
-def sanitize_filename(name: str, fallback: str = "arquivo") -> str:
+def sanitize_filename(name: str, fallback: str = "arquivo", max_length: int = 150) -> str:
     """Remove caracteres inválidos no Windows e nomes reservados."""
     name = str(name).strip()
     if not name:
@@ -28,7 +30,12 @@ def sanitize_filename(name: str, fallback: str = "arquivo") -> str:
     if cleaned.upper() in RESERVED_NAMES:
         cleaned = f"{cleaned}_"
 
-    return cleaned[:150]  # evita caminhos absurdamente longos
+    path = Path(cleaned)
+    suffix = path.suffix
+    if suffix and len(suffix) < max_length:
+        stem_limit = max_length - len(suffix)
+        return f"{path.stem[:stem_limit].rstrip(' .')}{suffix}"
+    return cleaned[:max_length].rstrip(" .")
 
 
 def unique_path(directory: Path, filename: str) -> Path:
@@ -47,35 +54,62 @@ def unique_path(directory: Path, filename: str) -> Path:
     return candidate
 
 
-def app_base_dir() -> Path:
-    """Diretório base da aplicação, funcionando tanto em dev quanto congelado (PyInstaller)."""
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).resolve().parent.parent
+def _user_state_base() -> Path:
+    if sys.platform.startswith("win"):
+        return Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    return Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
+
+
+def user_data_dir() -> Path:
+    """Retorna uma pasta gravável para configurações e logs do usuário."""
+    base = _user_state_base()
+    candidates = (base / "Automatech", Path(tempfile.gettempdir()) / "Automatech")
+    for directory in candidates:
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            return directory
+        except OSError:
+            continue
+    raise OSError("Não foi possível criar a pasta de dados da aplicação.")
 
 
 def logs_dir() -> Path:
-    d = app_base_dir() / "logs"
+    d = user_data_dir() / "logs"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
 def config_file_path() -> Path:
-    return app_base_dir() / "config.json"
+    return user_data_dir() / "config.json"
 
 
-def open_in_explorer(path: Path) -> None:
+def routines_file_path() -> Path:
+    return user_data_dir() / "routines.json"
+
+
+def history_file_path() -> Path:
+    return user_data_dir() / "history.json"
+
+
+def legacy_config_file_path() -> Path:
+    """Local usado por versões anteriores, apenas para migração."""
+    return _user_state_base() / "Automatiza" / "config.json"
+
+
+def open_in_explorer(path: Path) -> bool:
     """Abre uma pasta no explorador de arquivos do sistema (Windows/macOS/Linux)."""
     path = Path(path)
-    if sys.platform.startswith("win"):
-        os_startfile = getattr(sys.modules.get("os") or __import__("os"), "startfile", None)
-        if os_startfile:
-            os_startfile(str(path))
-    elif sys.platform == "darwin":
-        import subprocess
+    try:
+        if sys.platform.startswith("win"):
+            os.startfile(str(path))
+        elif sys.platform == "darwin":
+            import subprocess
 
-        subprocess.run(["open", str(path)], check=False)
-    else:
-        import subprocess
+            subprocess.run(["open", str(path)], check=False)
+        else:
+            import subprocess
 
-        subprocess.run(["xdg-open", str(path)], check=False)
+            subprocess.run(["xdg-open", str(path)], check=False)
+    except OSError:
+        return False
+    return True

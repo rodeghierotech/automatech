@@ -21,6 +21,16 @@ EXTENSION_CATEGORIES: dict[str, list[str]] = {
 }
 
 
+def _files_in(folder: Path) -> list[Path]:
+    try:
+        return [item for item in folder.iterdir() if item.is_file()]
+    except (PermissionError, OSError) as exc:
+        raise FileAccessError(
+            "Não foi possível acessar os arquivos da pasta selecionada.",
+            technical_detail=str(exc),
+        ) from exc
+
+
 def categorize_extension(extension: str) -> str:
     extension = extension.lower()
     for category, extensions in EXTENSION_CATEGORIES.items():
@@ -36,10 +46,9 @@ def preview_organization(folder: str | Path) -> dict[str, int]:
         raise ValidationError("A pasta selecionada não foi encontrada.")
 
     counts: dict[str, int] = {}
-    for item in folder.iterdir():
-        if item.is_file():
-            category = categorize_extension(item.suffix)
-            counts[category] = counts.get(category, 0) + 1
+    for item in _files_in(folder):
+        category = categorize_extension(item.suffix)
+        counts[category] = counts.get(category, 0) + 1
     return counts
 
 
@@ -56,14 +65,20 @@ def organize_folder(
     if not folder.exists() or not folder.is_dir():
         raise ValidationError("A pasta selecionada não foi encontrada.")
 
-    files = [item for item in folder.iterdir() if item.is_file()]
+    files = _files_in(folder)
     total = len(files)
     moved: dict[str, int] = {}
 
     for idx, item in enumerate(files, start=1):
         category = categorize_extension(item.suffix)
         dest_dir = folder / category
-        dest_dir.mkdir(exist_ok=True)
+        try:
+            dest_dir.mkdir(exist_ok=True)
+        except (PermissionError, OSError) as exc:
+            raise FileAccessError(
+                f"Não foi possível criar a pasta '{category}'. Verifique as permissões.",
+                technical_detail=str(exc),
+            ) from exc
 
         destination = unique_path(dest_dir, item.name)
         try:

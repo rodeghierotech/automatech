@@ -1,9 +1,9 @@
-"""Gera o executável Windows (Automatiza.exe) usando PyInstaller.
+"""Gera o executável Windows (Automatech.exe) usando PyInstaller.
 
 Uso:
     python build.py
 
-O executável final aparece em dist/Automatiza/Automatiza.exe
+O executável final aparece em dist/Automatech/Automatech.exe
 """
 from __future__ import annotations
 
@@ -11,15 +11,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-import customtkinter
-
-APP_NAME = "Automatiza"
+APP_NAME = "Automatech"
 ROOT = Path(__file__).resolve().parent
 
 
 def main() -> None:
-    ctk_path = Path(customtkinter.__file__).parent
-
     args = [
         sys.executable,
         "-m",
@@ -29,10 +25,10 @@ def main() -> None:
         "--windowed",  # não abre console
         "--name",
         APP_NAME,
-        "--add-data",
-        f"{ctk_path}{';' if sys.platform.startswith('win') else ':'}customtkinter",
         "--collect-all",
         "customtkinter",
+        "--add-data",
+        f"{ROOT / 'assets'}{';' if sys.platform.startswith('win') else ':'}assets",
         # Importado pelas extensões do NumPy; pode escapar da análise estática.
         "--hidden-import",
         "numpy._core._exceptions",

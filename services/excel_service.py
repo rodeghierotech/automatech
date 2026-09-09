@@ -11,11 +11,60 @@ from typing import Callable
 
 import pandas as pd
 
-from utils.errors import IncompatibleColumnsError, InvalidSpreadsheetError
+from utils.errors import (
+    FileAccessError,
+    IncompatibleColumnsError,
+    InvalidSpreadsheetError,
+    ValidationError,
+)
 from utils.paths import sanitize_filename, unique_path
 from utils.validators import validate_spreadsheet_path
 
 ProgressCallback = Callable[[int, int], None]  # (atual, total)
+
+
+def _text_columns(df: pd.DataFrame) -> list[object]:
+    return [
+        column
+        for column in df.columns
+        if df[column].dtype == object or pd.api.types.is_string_dtype(df[column].dtype)
+    ]
+
+
+def _standardized_headers(columns: pd.Index) -> list[str]:
+    """Normaliza cabeçalhos sem criar nomes duplicados."""
+    result: list[str] = []
+    occurrences: dict[str, int] = {}
+    for column in columns:
+        base = str(column).strip().title() or "Coluna"
+        key = base.casefold()
+        occurrences[key] = occurrences.get(key, 0) + 1
+        count = occurrences[key]
+        result.append(base if count == 1 else f"{base} ({count})")
+    return result
+
+
+def _write_spreadsheet(df: pd.DataFrame, output_path: str | Path) -> None:
+    """Grava uma planilha nova e remove arquivos parciais em caso de falha."""
+    destination = Path(output_path)
+    if destination.exists():
+        raise ValidationError(
+            f"Já existe um arquivo chamado '{destination.name}'. Escolha outro nome."
+        )
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        df.to_excel(destination, index=False, engine="openpyxl")
+    except (PermissionError, OSError) as exc:
+        if destination.exists():
+            try:
+                destination.unlink()
+            except OSError:
+                pass
+        raise FileAccessError(
+            f"Não foi possível salvar '{destination.name}'. Verifique se o arquivo está "
+            "aberto e se a pasta permite gravação.",
+            technical_detail=str(exc),
+        ) from exc
 
 
 def read_spreadsheet(path: str | Path) -> pd.DataFrame:
@@ -46,7 +95,33 @@ def get_headers(path: str | Path) -> list[str]:
             f"Não foi possível ler as colunas de '{p.name}'.",
             technical_detail=str(exc),
         ) from exc
-    return list(df.columns)
+    headers = [str(column) for column in df.columns]
+    if not headers:
+        raise InvalidSpreadsheetError(f"A planilha '{p.name}' não possui colunas.")
+    return headers
+
+
+def spreadsheet_preview(path: str | Path, max_rows: int = 3, max_columns: int = 5) -> str:
+    """Retorna uma amostra compacta e segura para exibição antes da execução."""
+    p = validate_spreadsheet_path(path)
+    try:
+        df = pd.read_excel(p, engine="openpyxl", nrows=max_rows)
+    except Exception as exc:  # noqa: BLE001
+        raise InvalidSpreadsheetError(
+            f"Não foi possível gerar a prévia de '{p.name}'.",
+            technical_detail=str(exc),
+        ) from exc
+    if not len(df.columns):
+        raise InvalidSpreadsheetError(f"A planilha '{p.name}' não possui colunas.")
+
+    visible = df.iloc[:, :max_columns].fillna("")
+    headers = [str(column)[:18] for column in visible.columns]
+    lines = ["  |  ".join(headers)]
+    for values in visible.itertuples(index=False, name=None):
+        lines.append("  |  ".join(str(value).replace("\n", " ")[:18] for value in values))
+    if len(df.columns) > max_columns:
+        lines[0] += f"  |  +{len(df.columns) - max_columns} coluna(s)"
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -63,7 +138,12 @@ def merge_spreadsheets(
     Retorna o total de linhas gravadas no arquivo final.
     """
     if len(file_paths) < 2:
-        raise InvalidSpreadsheetError("Selecione ao menos duas planilhas para unir.")
+        raise ValidationError("Selecione ao menos duas planilhas para unir.")
+
+    output_path = Path(output_path)
+    resolved_sources = {Path(path).resolve() for path in file_paths}
+    if output_path.resolve() in resolved_sources:
+        raise ValidationError("Escolha um nome diferente dos arquivos originais.")
 
     frames: list[pd.DataFrame] = []
     reference_columns: list[str] | None = None
@@ -89,9 +169,7 @@ def merge_spreadsheets(
 
     merged = pd.concat(frames, ignore_index=True)
 
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    merged.to_excel(output_path, index=False, engine="openpyxl")
+    _write_spreadsheet(merged, output_path)
 
     return len(merged)
 
@@ -122,13 +200,17 @@ def split_spreadsheet(
 
     unique_values = df[column].dropna().unique()
     total = len(unique_values)
+    if total == 0:
+        raise InvalidSpreadsheetError(
+            f"A coluna '{column}' não possui valores para gerar arquivos."
+        )
     generated = 0
 
     for idx, value in enumerate(unique_values, start=1):
         subset = df[df[column] == value]
-        filename = sanitize_filename(f"{value}.xlsx")
+        filename = f"{sanitize_filename(str(value), fallback='sem_valor', max_length=140)}.xlsx"
         dest = unique_path(output_dir, filename)
-        subset.to_excel(dest, index=False, engine="openpyxl")
+        _write_spreadsheet(subset, dest)
         generated += 1
         if progress_cb:
             progress_cb(idx, total)
@@ -155,16 +237,20 @@ def clean_spreadsheet(
     Retorna um resumo com as quantidades alteradas.
     """
     df = read_spreadsheet(file_path)
+    if Path(output_path).resolve() == Path(file_path).resolve():
+        raise ValidationError("O arquivo de saída precisa ser diferente do original.")
     original_rows = len(df)
     original_cols = len(df.columns)
 
     if standardize_headers:
-        df.columns = [str(c).strip().title() for c in df.columns]
+        df.columns = _standardized_headers(df.columns)
 
     if trim_whitespace:
-        text_cols = df.select_dtypes(include="object").columns
+        text_cols = _text_columns(df)
         for col in text_cols:
-            df[col] = df[col].astype(str).str.strip().replace({"nan": None})
+            df[col] = df[col].map(
+                lambda value: value.strip() if isinstance(value, str) else value
+            )
 
     if remove_empty_columns:
         df = df.dropna(axis=1, how="all")
@@ -176,17 +262,19 @@ def clean_spreadsheet(
     if remove_duplicates:
         before = len(df)
         if ignore_case_on_duplicates:
-            text_cols = df.select_dtypes(include="object").columns
-            comparison_key = df[text_cols].apply(lambda s: s.str.lower()) if len(text_cols) else df
-            dup_mask = pd.concat([comparison_key, df.drop(columns=text_cols)], axis=1).duplicated()
+            text_cols = _text_columns(df)
+            comparison_key = df.copy()
+            for col in text_cols:
+                comparison_key[col] = comparison_key[col].map(
+                    lambda value: value.casefold() if isinstance(value, str) else value
+                )
+            dup_mask = comparison_key.duplicated()
             df = df[~dup_mask]
         else:
             df = df.drop_duplicates()
         duplicates_removed = before - len(df)
 
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_excel(output_path, index=False, engine="openpyxl")
+    _write_spreadsheet(df, output_path)
 
     return {
         "linhas_originais": original_rows,

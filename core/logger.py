@@ -10,7 +10,7 @@ from logging.handlers import RotatingFileHandler
 
 from utils.paths import logs_dir
 
-_LOGGER_NAME = "automatiza"
+_LOGGER_NAME = "automatech"
 _configured = False
 
 

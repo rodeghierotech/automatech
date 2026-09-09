@@ -17,7 +17,7 @@ class ModuleInfo:
     name: str            # nome exibido, ex: "Unir planilhas"
     description: str     # descrição curta para o card
     category: str        # ex: "Planilhas", "Arquivos"
-    icon: str = "📄"      # emoji usado como ícone simples
+    icon: str = "file-spreadsheet"
 
 
 class AutomationModule(ABC):
