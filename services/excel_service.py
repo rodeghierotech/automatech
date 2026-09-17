@@ -11,7 +11,12 @@ from typing import Callable
 
 import pandas as pd
 
-from services.spreadsheet_cleaning import CleaningOptions, apply_cleaning
+from services.report_service import write_cleaning_report
+from services.spreadsheet_cleaning import (
+    CleaningOptions,
+    CleaningResult,
+    apply_cleaning,
+)
 from services.spreadsheet_profile_service import CleaningPreview, simulate_cleaning
 from utils.errors import (
     FileAccessError,
@@ -240,3 +245,46 @@ def clean_spreadsheet(
     cleaned, metrics = apply_cleaning(df, options)
     _write_spreadsheet(cleaned, output_path)
     return metrics.as_legacy_summary()
+
+
+def clean_spreadsheet_detailed(
+    file_path: str | Path,
+    output_path: str | Path,
+    options: CleaningOptions,
+) -> CleaningResult:
+    """Limpa a planilha e gera um relatório HTML complementar."""
+    source = Path(file_path)
+    destination = Path(output_path)
+    if destination.resolve() == source.resolve():
+        raise ValidationError("O arquivo de saída precisa ser diferente do original.")
+
+    frame = read_spreadsheet(source)
+    preview = simulate_cleaning(frame, str(source), options)
+    cleaned, metrics = apply_cleaning(frame, options)
+    _write_spreadsheet(cleaned, destination)
+
+    requested_report = destination.with_name(
+        f"{destination.stem}_relatorio.html"
+    )
+    report_path: Path | None = None
+    report_warning = ""
+    try:
+        report_path = write_cleaning_report(
+            preview,
+            metrics,
+            options,
+            source,
+            destination,
+            requested_report,
+        )
+    except OSError:
+        report_warning = (
+            "A planilha foi criada, mas não foi possível gerar o relatório."
+        )
+
+    return CleaningResult(
+        metrics=metrics,
+        output_path=destination,
+        report_path=report_path,
+        report_warning=report_warning,
+    )

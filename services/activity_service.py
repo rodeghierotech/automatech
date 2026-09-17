@@ -63,6 +63,7 @@ def record_execution(
     status: str,
     summary: str,
     output_path: str | Path | None = None,
+    report_path: str | Path | None = None,
 ) -> None:
     try:
         entry = {
@@ -74,6 +75,8 @@ def record_execution(
             "output_path": str(output_path) if output_path else "",
             "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         }
+        if report_path:
+            entry["report_path"] = str(report_path)
         path = history_file_path()
         history = _read_list(path)
         history.insert(0, entry)
