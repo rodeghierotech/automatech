@@ -6,6 +6,7 @@ htmlcov/
 
 .idea/
 .vscode/
+.worktrees/
 .DS_Store
 Thumbs.db
 
