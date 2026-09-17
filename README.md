@@ -61,8 +61,12 @@ cd automatech
 python -m venv venv
 .\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-python main.py
+.\venv\Scripts\python.exe main.py
 ```
+
+Use o executável Python do ambiente virtual ao iniciar o aplicativo. Se aparecer
+`ModuleNotFoundError: No module named 'customtkinter'`, o Automatech foi aberto
+com outro Python; repita o último comando dentro da pasta do projeto.
 
 ## Gerar o executável para Windows
 
