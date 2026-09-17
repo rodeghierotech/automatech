@@ -12,6 +12,7 @@ from typing import Callable
 import pandas as pd
 
 from services.spreadsheet_cleaning import CleaningOptions, apply_cleaning
+from services.spreadsheet_profile_service import CleaningPreview, simulate_cleaning
 from utils.errors import (
     FileAccessError,
     IncompatibleColumnsError,
@@ -102,6 +103,15 @@ def spreadsheet_preview(path: str | Path, max_rows: int = 3, max_columns: int = 
     if len(df.columns) > max_columns:
         lines[0] += f"  |  +{len(df.columns) - max_columns} coluna(s)"
     return "\n".join(lines)
+
+
+def analyze_spreadsheet(
+    file_path: str | Path,
+    options: CleaningOptions,
+) -> CleaningPreview:
+    """Gera o Raio-X e a estimativa de limpeza de uma planilha."""
+    frame = read_spreadsheet(file_path)
+    return simulate_cleaning(frame, str(Path(file_path)), options)
 
 
 # ---------------------------------------------------------------------------
