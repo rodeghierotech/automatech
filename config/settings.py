@@ -8,7 +8,7 @@ from pathlib import Path
 from utils.paths import config_file_path, legacy_config_file_path
 
 APP_NAME = "Automatech"
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.3.0"
 
 
 @dataclass
