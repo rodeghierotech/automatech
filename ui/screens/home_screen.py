@@ -22,7 +22,7 @@ class HomeScreen(ctk.CTkFrame):
     ):
         super().__init__(parent, fg_color="transparent", **kwargs)
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(2, weight=1)
+        self.grid_rowconfigure(3, weight=1)
 
         title = ctk.CTkLabel(
             self,
@@ -46,8 +46,19 @@ class HomeScreen(ctk.CTkFrame):
         )
         subtitle.grid(row=1, column=0, sticky="w", padx=PADDING, pady=(4, 20))
 
+        local_badge = ctk.CTkLabel(
+            self,
+            text="Processamento 100% local",
+            font=(FONT_FAMILY, FONT_SIZES["caption"], "bold"),
+            text_color=COLORS["accent"],
+            fg_color=COLORS["accent_soft"],
+            corner_radius=8,
+            height=28,
+        )
+        local_badge.grid(row=2, column=0, sticky="w", padx=PADDING, pady=(0, 14))
+
         cards_area = ctk.CTkScrollableFrame(self, fg_color="transparent")
-        cards_area.grid(row=2, column=0, sticky="nsew", padx=PADDING - 6, pady=(0, PADDING))
+        cards_area.grid(row=3, column=0, sticky="nsew", padx=PADDING - 6, pady=(0, PADDING))
         for col in range(CARDS_PER_ROW):
             cards_area.grid_columnconfigure(col, weight=1, uniform="cards")
 
