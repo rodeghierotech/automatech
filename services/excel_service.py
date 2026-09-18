@@ -11,6 +11,13 @@ from typing import Callable
 
 import pandas as pd
 
+from services.report_service import write_cleaning_report
+from services.spreadsheet_cleaning import (
+    CleaningOptions,
+    CleaningResult,
+    apply_cleaning,
+)
+from services.spreadsheet_profile_service import CleaningPreview, simulate_cleaning
 from utils.errors import (
     FileAccessError,
     IncompatibleColumnsError,
@@ -21,27 +28,6 @@ from utils.paths import sanitize_filename, unique_path
 from utils.validators import validate_spreadsheet_path
 
 ProgressCallback = Callable[[int, int], None]  # (atual, total)
-
-
-def _text_columns(df: pd.DataFrame) -> list[object]:
-    return [
-        column
-        for column in df.columns
-        if df[column].dtype == object or pd.api.types.is_string_dtype(df[column].dtype)
-    ]
-
-
-def _standardized_headers(columns: pd.Index) -> list[str]:
-    """Normaliza cabeçalhos sem criar nomes duplicados."""
-    result: list[str] = []
-    occurrences: dict[str, int] = {}
-    for column in columns:
-        base = str(column).strip().title() or "Coluna"
-        key = base.casefold()
-        occurrences[key] = occurrences.get(key, 0) + 1
-        count = occurrences[key]
-        result.append(base if count == 1 else f"{base} ({count})")
-    return result
 
 
 def _write_spreadsheet(df: pd.DataFrame, output_path: str | Path) -> None:
@@ -122,6 +108,15 @@ def spreadsheet_preview(path: str | Path, max_rows: int = 3, max_columns: int = 
     if len(df.columns) > max_columns:
         lines[0] += f"  |  +{len(df.columns) - max_columns} coluna(s)"
     return "\n".join(lines)
+
+
+def analyze_spreadsheet(
+    file_path: str | Path,
+    options: CleaningOptions,
+) -> CleaningPreview:
+    """Gera o Raio-X e a estimativa de limpeza de uma planilha."""
+    frame = read_spreadsheet(file_path)
+    return simulate_cleaning(frame, str(Path(file_path)), options)
 
 
 # ---------------------------------------------------------------------------
@@ -239,47 +234,57 @@ def clean_spreadsheet(
     df = read_spreadsheet(file_path)
     if Path(output_path).resolve() == Path(file_path).resolve():
         raise ValidationError("O arquivo de saída precisa ser diferente do original.")
-    original_rows = len(df)
-    original_cols = len(df.columns)
+    options = CleaningOptions(
+        remove_empty_rows=remove_empty_rows,
+        remove_duplicates=remove_duplicates,
+        trim_whitespace=trim_whitespace,
+        remove_empty_columns=remove_empty_columns,
+        standardize_headers=standardize_headers,
+        ignore_case_on_duplicates=ignore_case_on_duplicates,
+    )
+    cleaned, metrics = apply_cleaning(df, options)
+    _write_spreadsheet(cleaned, output_path)
+    return metrics.as_legacy_summary()
 
-    if standardize_headers:
-        df.columns = _standardized_headers(df.columns)
 
-    if trim_whitespace:
-        text_cols = _text_columns(df)
-        for col in text_cols:
-            df[col] = df[col].map(
-                lambda value: value.strip() if isinstance(value, str) else value
-            )
+def clean_spreadsheet_detailed(
+    file_path: str | Path,
+    output_path: str | Path,
+    options: CleaningOptions,
+) -> CleaningResult:
+    """Limpa a planilha e gera um relatório HTML complementar."""
+    source = Path(file_path)
+    destination = Path(output_path)
+    if destination.resolve() == source.resolve():
+        raise ValidationError("O arquivo de saída precisa ser diferente do original.")
 
-    if remove_empty_columns:
-        df = df.dropna(axis=1, how="all")
+    frame = read_spreadsheet(source)
+    preview = simulate_cleaning(frame, str(source), options)
+    cleaned, metrics = apply_cleaning(frame, options)
+    _write_spreadsheet(cleaned, destination)
 
-    if remove_empty_rows:
-        df = df.dropna(axis=0, how="all")
+    requested_report = destination.with_name(
+        f"{destination.stem}_relatorio.html"
+    )
+    report_path: Path | None = None
+    report_warning = ""
+    try:
+        report_path = write_cleaning_report(
+            preview,
+            metrics,
+            options,
+            source,
+            destination,
+            requested_report,
+        )
+    except OSError:
+        report_warning = (
+            "A planilha foi criada, mas não foi possível gerar o relatório."
+        )
 
-    duplicates_removed = 0
-    if remove_duplicates:
-        before = len(df)
-        if ignore_case_on_duplicates:
-            text_cols = _text_columns(df)
-            comparison_key = df.copy()
-            for col in text_cols:
-                comparison_key[col] = comparison_key[col].map(
-                    lambda value: value.casefold() if isinstance(value, str) else value
-                )
-            dup_mask = comparison_key.duplicated()
-            df = df[~dup_mask]
-        else:
-            df = df.drop_duplicates()
-        duplicates_removed = before - len(df)
-
-    _write_spreadsheet(df, output_path)
-
-    return {
-        "linhas_originais": original_rows,
-        "linhas_finais": len(df),
-        "colunas_originais": original_cols,
-        "colunas_finais": len(df.columns),
-        "duplicados_removidos": duplicates_removed,
-    }
+    return CleaningResult(
+        metrics=metrics,
+        output_path=destination,
+        report_path=report_path,
+        report_warning=report_warning,
+    )

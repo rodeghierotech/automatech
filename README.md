@@ -30,12 +30,18 @@ apenas move arquivos para subpastas dentro da pasta escolhida.
 - **Limpar planilha:** remove vazios, duplicados e espaços extras, além de
   padronizar cabeçalhos.
 - **Prévia dos dados:** exibe uma amostra antes de iniciar o processamento.
+- **Raio-X dos Dados:** identifica vazios, duplicados, tipos e inconsistências
+  antes da limpeza, com uma estimativa do resultado.
+- **Relatório de transformação:** gera um HTML local com as opções aplicadas e
+  a comparação entre as métricas anteriores e finais.
 
 ### Arquivos e produtividade
 
 - **Organizador de arquivos:** distribui documentos em pastas por categoria.
 - **Rotinas salvas:** restaura arquivos, destinos e opções usados com frequência.
 - **Histórico:** registra resultados e oferece acesso rápido à pasta de saída.
+- **Artefatos da execução:** permite abrir o relatório de limpeza diretamente
+  pelo histórico.
 - **Execução em segundo plano:** mantém a interface responsiva durante operações.
 
 ## Segurança dos dados
@@ -61,8 +67,12 @@ cd automatech
 python -m venv venv
 .\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-python main.py
+.\venv\Scripts\python.exe main.py
 ```
+
+Use o executável Python do ambiente virtual ao iniciar o aplicativo. Se aparecer
+`ModuleNotFoundError: No module named 'customtkinter'`, o Automatech foi aberto
+com outro Python; repita o último comando dentro da pasta do projeto.
 
 ## Gerar o executável para Windows
 

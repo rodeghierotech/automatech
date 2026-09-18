@@ -72,11 +72,21 @@ class HistoryScreen(ctk.CTkFrame):
                 font=(FONT_FAMILY, FONT_SIZES["small"]),
                 text_color=COLORS["success"] if success else COLORS["error"], anchor="w",
             ).grid(row=2, column=0, sticky="w", padx=18, pady=(4, 14))
+            actions = ctk.CTkFrame(card, fg_color="transparent")
+            actions.grid(row=0, column=1, rowspan=3, padx=18, pady=14)
             output = entry.get("output_path", "")
             if output:
                 SecondaryButton(
-                    card, text="Abrir pasta", width=108,
+                    actions, text="Abrir pasta", width=118,
                     command=lambda value=output: open_in_explorer(
                         Path(value) if Path(value).is_dir() else Path(value).parent
                     ),
-                ).grid(row=0, column=1, rowspan=3, padx=18, pady=14)
+                ).pack(pady=(0, 8))
+            report = entry.get("report_path", "")
+            if report and Path(report).is_file():
+                SecondaryButton(
+                    actions,
+                    text="Abrir relatório",
+                    width=118,
+                    command=lambda value=report: open_in_explorer(Path(value)),
+                ).pack()

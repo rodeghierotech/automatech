@@ -3,14 +3,17 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import pandas as pd
 
 from services.excel_service import (
+    clean_spreadsheet_detailed,
     clean_spreadsheet,
     merge_spreadsheets,
     split_spreadsheet,
 )
+from services.spreadsheet_cleaning import CleaningOptions
 from services.file_service import organize_folder
 from utils.errors import IncompatibleColumnsError, ValidationError
 from utils.paths import sanitize_filename
@@ -72,6 +75,37 @@ class SpreadsheetServiceTests(unittest.TestCase):
         self.assertEqual(summary["duplicados_removidos"], 1)
         self.assertEqual(result["Nome"].iloc[0], "Ana")
         self.assertTrue(pd.isna(result["Nome"].iloc[1]))
+
+    def test_detailed_cleaning_generates_spreadsheet_and_report(self) -> None:
+        source = self._spreadsheet(
+            "clientes.xlsx", {"Nome": [" Ana ", "Ana"]}
+        )
+        output = self.folder / "clientes_limpo.xlsx"
+
+        result = clean_spreadsheet_detailed(source, output, CleaningOptions())
+
+        self.assertTrue(result.output_path.exists())
+        self.assertIsNotNone(result.report_path)
+        self.assertTrue(result.report_path.is_file())
+        self.assertEqual(result.metrics.duplicates_removed, 1)
+        self.assertEqual(result.report_warning, "")
+
+    def test_detailed_cleaning_preserves_output_when_report_fails(self) -> None:
+        source = self._spreadsheet("clientes.xlsx", {"Nome": ["Ana"]})
+        output = self.folder / "clientes_limpo.xlsx"
+
+        with patch(
+            "services.excel_service.write_cleaning_report",
+            side_effect=OSError("sem permissão"),
+        ):
+            result = clean_spreadsheet_detailed(source, output, CleaningOptions())
+
+        self.assertTrue(output.exists())
+        self.assertIsNone(result.report_path)
+        self.assertEqual(
+            result.report_warning,
+            "A planilha foi criada, mas não foi possível gerar o relatório.",
+        )
 
     def test_split_generates_safe_unique_names(self) -> None:
         source = self._spreadsheet(
